@@ -74,6 +74,7 @@
       // so return null
       return null;
     },
+    //语法检查，校验是否正确的判断表达式
     is: function(template) {
       // TRUE ONLY IF it's in a correct format.
       // Otherwise return the original template
@@ -206,20 +207,25 @@
     tokenize: function(str) {
       // INPUT : string
       // OUTPUT : {name: FUNCTION_NAME:STRING, args: ARGUMENT:ARRAY}
+      //匹配{{}}
       var re = /\{\{(.+)\}\}/g;
+      //去掉{{}}
       str = str.replace(re, '$1');
       // str : '#each $jason.items'
-
+      //去掉收尾空白符，按照空格分割字符
       var tokens = str.trim().split(' ');
       // => tokens: ['#each', '$jason.items']
 
       var func;
       if (tokens.length > 0) {
+        //是否#开头的指令
         if (tokens[0][0] === '#') {
+          //pop第一个字符串
           func = tokens.shift();
           // => func: '#each' or '#if'
           // => tokens: ['$jason.items', '&&', '$jason.items.length', '>', '0']
 
+          //再链接回来变成表达式
           var expression = tokens.join(' ');
           // => expression: '$jason.items && $jason.items.length > 0'
 
@@ -231,6 +237,7 @@
     run: function(template, data) {
       var result;
       var fun;
+      //只是一个value节点
       if (typeof template === 'string') {
         // Leaf node, so call TRANSFORM.fillout()
         if (Helper.is_template(template)) {
@@ -253,6 +260,7 @@
           result = template;
         }
       } else if (Helper.is_array(template)) {
+        //如果是一个数组，那么要看看是否是一个条件表达式
         if (Conditional.is(template)) {
           result = Conditional.run(template, data);
         } else {
@@ -493,6 +501,7 @@
       var replaced = template;
       // Run fillout() only if it's a template. Otherwise just return the original string
       if (Helper.is_template(template)) {
+        //非贪婪匹配
         var re = /\{\{(.*?)\}\}/g;
 
         // variables are all instances of {{ }} in the current expression
@@ -531,12 +540,14 @@
     _fillout: function(options) {
       // Given a template and fill it out with passed slot and its corresponding data
       var re = /\{\{(.*?)\}\}/g;
+      //正向否定预查，只包含{{xxx}}的纯模板
       var full_re = /^\{\{((?!\}\}).)*\}\}$/;
       var variable = options.variable;
       var data = options.data;
       var template = options.template;
       try {
         // 1. Evaluate the variable
+        // 去掉{{}}
         var slot = variable.replace(re, '$1');
 
         // data must exist. Otherwise replace with blank
@@ -548,6 +559,7 @@
             data.$root = root;
           }
           // If the pattern ends with a return statement, but is NOT wrapped inside another function ([^}]*$), it's a function expression
+          //匹配是否函数表达式
           var match = /function\([ ]*\)[ ]*\{(.*)\}[ ]*$/g.exec(slot);
           if (match) {
             func = Function('with(this) {' + match[1] + '}').bind(data);
@@ -575,6 +587,7 @@
             if (evaluated) {
               // IDEAL CASE : Return the replaced template
               if (template) {
+                //如果是只包含{{xxx}}的纯模板，且求值是一个对象或者一个数组，会直接返回对象，不会作为字符串替换模板内容
                 // if the template is a pure template with no additional static text,
                 // And if the evaluated value is an object or an array, we return the object itself instead of
                 // replacing it into template via string replace, since that will turn it into a string.
@@ -595,6 +608,7 @@
                 if (full_re.test(template)) {
                   return evaluated;
                 } else {
+                  //false和null会被处理成空字符串
                   return template.replace(variable, '');
                 }
               } else {
