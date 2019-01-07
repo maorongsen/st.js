@@ -17,6 +17,7 @@
 		},
 	};
 	var Conditional = {
+    //执行判断逻辑
 		run: function (template, data) {
 			// expecting template as an array of objects,
 			// each of which contains '#if', '#elseif', 'else' as key
@@ -183,7 +184,8 @@
 			} else {
 				return res;
 			}
-		},
+    },
+    //区分指令和表达式，不然返回null
 		tokenize: function (str) {
 			// INPUT : string
 			// OUTPUT : {name: FUNCTION_NAME:STRING, args: ARGUMENT:ARRAY}
@@ -224,21 +226,7 @@
 			if (typeof template === 'string') {
 				// Leaf node, so call TRANSFORM.fillout()
 				if (Helper.is_template(template)) {
-					var include_string_re = /\{\{([ ]*#include)[ ]*([^ ]*)\}\}/g;
-					if (include_string_re.test(template)) {
-						fun = TRANSFORM.tokenize(template);
-						if (fun.expression) {
-							// if #include has arguments, evaluate it before attaching
-							result = TRANSFORM.fillout(data, '{{' + fun.expression + '}}', true);
-						} else {
-							// shouldn't happen =>
-							// {'wrapper': '{{#include}}'}
-							result = template;
-						}
-					} else {
-						// non-#include
-						result = TRANSFORM.fillout(data, template);
-					}
+					result = TRANSFORM.fillout(data, template);
 				} else {
 					result = template;
 				}
@@ -258,34 +246,16 @@
 						}
 					}
 				}
-			} else if (Object.prototype.toString.call(template) === '[object Object]') {
+			} else if (Object.prototype.toString.call(template) === '[object Object]') { //精确判断是否Object
 				// template is an object
 				result = {};
-
-				// ## Handling #include
-				// This needs to precede everything else since it's meant to be overwritten
-				// in case of collision
-				var include_object_re = /\{\{([ ]*#include)[ ]*(.*)\}\}/;
-				var include_keys = Object.keys(template).filter(function (key) {
-					return include_object_re.test(key);
-				});
-				if (include_keys.length > 0) {
-					// find the first key with #include
-					fun = TRANSFORM.tokenize(include_keys[0]);
-					if (fun.expression) {
-						// if #include has arguments, evaluate it before attaching
-						result = TRANSFORM.fillout(template[include_keys[0]], '{{' + fun.expression + '}}', true);
-					} else {
-						// no argument, simply attach the child
-						result = template[include_keys[0]];
-					}
-				}
 
 				for (var key in template) {
 					// Checking to see if the key contains template..
 					// Currently the only case for this are '#each' and '#include'
 					if (Helper.is_template(key)) {
-						fun = TRANSFORM.tokenize(key);
+            fun = TRANSFORM.tokenize(key);
+            //如果有指令
 						if (fun) {
 							if (fun.name === '#include') {
 								// this was handled above (before the for loop) so just ignore
@@ -434,7 +404,8 @@
 							} // end of #each
 						} else { // end of if (fun)
 							// If the key is a template expression but aren't either #include or #each,
-							// it needs to be parsed
+              // it needs to be parsed
+              //没有指令，直接填充模板
 							var k = TRANSFORM.fillout(data, key);
 							var v = TRANSFORM.fillout(data, template[key]);
 							if (k !== undefined && v !== undefined) {
@@ -442,9 +413,11 @@
 							}
 						}
 					} else {
-						// Helper.is_template(key) was false, which means the key was not a template (hardcoded string)
+            // Helper.is_template(key) was false, which means the key was not a template (hardcoded string)
+            //如果key不是模板，那么直接处理value
 						if (typeof template[key] === 'string') {
-							fun = TRANSFORM.tokenize(template[key]);
+              fun = TRANSFORM.tokenize(template[key]);
+              //value只关心存在判断
 							if (fun && fun.name === '#?') {
 								// If the key is a template expression but aren't either #include or #each,
 								// it needs to be parsed
@@ -768,3 +741,4 @@
 
 
 }());
+
