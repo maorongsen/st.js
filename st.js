@@ -1,7 +1,8 @@
 (function () {
 	var $context = this;
 	var root; // root context
-	var ast;
+	var sTemplate; //静态模板
+	var dTemplate; //动态模板
 	var Helper = {
 		testCache:{},
 		is_template: function (str) {
@@ -168,11 +169,67 @@
 			return true;
 		},
 	};
+	var count = 0;
 	var TRANSFORM = {
 		memory: {},
-		//生成ast
-		setTemplate: function (template) {
-
+		//分离动静模板
+		separate: function (template, forceKeep) {
+			if (Helper.is_array(template)){
+				//数组
+				var d = [];
+				var k = Conditional.is(template); //是判断语句，那么就算value无内容也要保留空对象
+				for (var i = 0; i < template.length; i++) {
+					var ret = TRANSFORM.separate(template[i], k);
+					if (ret){
+						d.push(ret);
+					}
+				}
+				if (d.length){
+					return d;
+				}
+			}else{ 
+				//对象
+				var d = {};
+				for (var key in template) {
+					//如果key是
+					var value = template[key];
+					if (Helper.is_template(key)){
+						if (typeof value === 'string') {
+							d[key] = value;
+						}else{
+							var ret = TRANSFORM.separate(value);
+							if (ret){
+								d[key] = ret;
+							}else if (forceKeep){
+								if (Helper.is_array(value)){
+									d[key] = [];
+								}else{
+									d[key] = {};
+								}
+							}
+						}
+					}else{
+						if (typeof value === 'string') {
+							if (Helper.is_template(value)){
+								d[key] = value;
+							}
+						}else{
+							var ret = TRANSFORM.separate(value);
+							if (ret){
+								d[key] = ret;
+							}
+						}
+					}
+				}
+				if (Object.keys(d).length){
+					return d;
+				}
+			}
+			return null;
+		},
+		fastTransform:function(template, data){
+            var dt  = TRANSFORM.separate(template);
+            TRANSFORM.transform(dt, data);
 		},
 		transform: function (template, data, injection, serialized) {
 			var data = data;
@@ -474,6 +531,7 @@
 			}
 			return result;
 		},
+		variablesCache:{},
 		fillout: function (data, template, raw) {
 			// 1. fill out if possible
 			// 2. otherwise return the original
@@ -481,11 +539,16 @@
 			// Run fillout() only if it's a template. Otherwise just return the original string
 			if (Helper.is_template(template)) {
 				//非贪婪匹配
-				var re = /\{\{(.*?)\}\}/g;
+				var variables = TRANSFORM.variablesCache[template];
+				if (variable === undefined){
+					var re = /\{\{(.*?)\}\}/g;
 
 				// variables are all instances of {{ }} in the current expression
 				// for example '{{this.item}} is {{this.user}}'s' has two variables: ['this.item', 'this.user']
-				var variables = template.match(re);
+					variables = template.match(re);
+					TRANSFORM.variablesCache[template] = variables;
+				}
+				
 
 				if (variables) {
 					if (raw) {
@@ -516,6 +579,7 @@
 			}
 			return replaced;
 		},
+		funcCache:{},
 		_fillout: function (options) {
 			// Given a template and fill it out with passed slot and its corresponding data
 			var re = /\{\{(.*?)\}\}/g;
@@ -527,30 +591,41 @@
 			try {
 				// 1. Evaluate the variable
 				// 去掉{{}}
-				var slot = variable.replace(re, '$1');
+				
 
 				// data must exist. Otherwise replace with blank
 				if (data) {
-					var func;
-					// Attach $root to each node so that we can reference it from anywhere
 					var data_type = typeof data;
 					if (['number', 'string', 'array', 'boolean', 'function'].indexOf(data_type === -1)) {
 						data.$root = root;
 					}
+					
+					var func = TRANSFORM.funcCache[variable];
+					if (func === undefined){
+						var slot = variable.replace(re, '$1');
+						var match = /function\([ ]*\)[ ]*\{(.*)\}[ ]*$/g.exec(slot);
+						if (match) {
+							func = Function('with(this) {' + match[1] + '}');
+						} else if (/\breturn [^;]+;?[ ]*$/.test(slot) && /return[^}]*$/.test(slot)) {
+							// Function expression with explicit 'return' expression
+							func = Function('with(this) {' + slot + '}');
+						} else {
+							// Function expression with explicit 'return' expression
+							// Ordinary simple expression that
+							func = Function('with(this) {return (' + slot + ')}');
+						}
+						TRANSFORM.funcCache[variable] = func;
+					}
+					
+					// Attach $root to each node so that we can reference it from anywhere
+					
+					
 					// If the pattern ends with a return statement, but is NOT wrapped inside another function ([^}]*$), it's a function expression
 					//匹配是否函数表达式
-					var match = /function\([ ]*\)[ ]*\{(.*)\}[ ]*$/g.exec(slot);
-					if (match) {
-						func = Function('with(this) {' + match[1] + '}').bind(data);
-					} else if (/\breturn [^;]+;?[ ]*$/.test(slot) && /return[^}]*$/.test(slot)) {
-						// Function expression with explicit 'return' expression
-						func = Function('with(this) {' + slot + '}').bind(data);
-					} else {
-						// Function expression with explicit 'return' expression
-						// Ordinary simple expression that
-						func = Function('with(this) {return (' + slot + ')}').bind(data);
-					}
-					var evaluated = func();
+
+					var evaluated = func.bind(data)();
+					// var evaluated = "xxx";
+					
 					delete data.$root; // remove $root now that the parsing is over
 					if (evaluated) {
 						// In case of primitive types such as String, need to call valueOf() to get the actual value instead of the promoted object
@@ -647,6 +722,7 @@
 			Conditional: Conditional,
 			Helper: Helper,
 			transform: TRANSFORM.transform,
+			fastTransform: TRANSFORM.fastTransform,
 		};
 		if (typeof module !== 'undefined' && module.exports) {
 			exports = module.exports = x;
@@ -655,16 +731,18 @@
 	} else {
 		$context.ST = {
 			transform: TRANSFORM.transform,
+			fastTransform: TRANSFORM.fastTransform,
 		};
 	}
 
+	/*
 	//测试basice
 	console.log("测试Basic")
 	var template = {
 		"menu": {
-			"flavor": "{{flavor}}",
-			"richness": "{{richness}}",
-			"garlic amount": "{{garlic_amount}}",
+			"flavor": "1",
+			"richness": "2",
+			"garlic amount": "3",
 			"green onion?": "{{green_onion}}",
 			"sliced pork?": "{{pork_amount}}",
 			"secret sauce": "{{sauce_amount}}",
@@ -688,7 +766,8 @@
 	template = {
 		"orders": {
 			"{{#each customers}}": {
-				"order": "One {{menu}} for {{name}}!"
+				"order": "One {{menu}} for {{name}}!",
+				"name": "Good name!!!"
 			}
 		}
 	}
@@ -758,7 +837,7 @@
 	}
 	result = TRANSFORM.transform(template, data)
 	console.log(result)
-
-
+	
+     */
 
 }());
