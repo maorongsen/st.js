@@ -1,10 +1,18 @@
 (function () {
 	var $context = this;
 	var root; // root context
+	var ast;
 	var Helper = {
+		testCache:{},
 		is_template: function (str) {
+			var ret = Helper.testCache[str];
+			if (ret != undefined){
+				return ret;
+			}
 			var re = /\{\{(.+)\}\}/g;
-			return re.test(str);
+			ret = re.test(str);
+			Helper.testCache[str] = ret;
+			return ret;
 		},
 		is_array: function (item) {
 			return (
@@ -17,7 +25,7 @@
 		},
 	};
 	var Conditional = {
-    //执行判断逻辑
+		//执行判断逻辑
 		run: function (template, data) {
 			// expecting template as an array of objects,
 			// each of which contains '#if', '#elseif', 'else' as key
@@ -162,6 +170,10 @@
 	};
 	var TRANSFORM = {
 		memory: {},
+		//生成ast
+		setTemplate: function (template) {
+
+		},
 		transform: function (template, data, injection, serialized) {
 			var data = data;
 			try {
@@ -184,9 +196,16 @@
 			} else {
 				return res;
 			}
-    },
-    //区分指令和表达式，不然返回null
+		},
+		//缓存token信息
+		tokenizeCache:{},
+		//区分指令和表达式，不然返回null
 		tokenize: function (str) {
+			var cacheKey = str;
+			var cachedToken = TRANSFORM.tokenizeCache[cacheKey];
+			if (cachedToken != undefined){
+				return cachedToken;
+			}
 			// INPUT : string
 			// OUTPUT : {name: FUNCTION_NAME:STRING, args: ARGUMENT:ARRAY}
 			//匹配{{}}
@@ -210,13 +229,15 @@
 					//再链接回来变成表达式
 					var expression = tokens.join(' ');
 					// => expression: '$jason.items && $jason.items.length > 0'
-
-					return {
+					var token = {
 						name: func,
 						expression: expression
 					};
+					TRANSFORM.tokenizeCache[cacheKey] = token;
+					return token;
 				}
 			}
+			TRANSFORM.tokenizeCache[cacheKey] = null;
 			return null;
 		},
 		run: function (template, data) {
@@ -254,8 +275,8 @@
 					// Checking to see if the key contains template..
 					// Currently the only case for this are '#each' and '#include'
 					if (Helper.is_template(key)) {
-            fun = TRANSFORM.tokenize(key);
-            //如果有指令
+						fun = TRANSFORM.tokenize(key);
+						//如果有指令
 						if (fun) {
 							if (fun.name === '#include') {
 								// this was handled above (before the for loop) so just ignore
@@ -404,8 +425,8 @@
 							} // end of #each
 						} else { // end of if (fun)
 							// If the key is a template expression but aren't either #include or #each,
-              // it needs to be parsed
-              //没有指令，直接填充模板
+							// it needs to be parsed
+							//没有指令，直接填充模板
 							var k = TRANSFORM.fillout(data, key);
 							var v = TRANSFORM.fillout(data, template[key]);
 							if (k !== undefined && v !== undefined) {
@@ -413,11 +434,11 @@
 							}
 						}
 					} else {
-            // Helper.is_template(key) was false, which means the key was not a template (hardcoded string)
-            //如果key不是模板，那么直接处理value
+						// Helper.is_template(key) was false, which means the key was not a template (hardcoded string)
+						//如果key不是模板，那么直接处理value
 						if (typeof template[key] === 'string') {
-              fun = TRANSFORM.tokenize(template[key]);
-              //value只关心存在判断
+							fun = TRANSFORM.tokenize(template[key]);
+							//value只关心存在判断
 							if (fun && fun.name === '#?') {
 								// If the key is a template expression but aren't either #include or #each,
 								// it needs to be parsed
@@ -741,4 +762,3 @@
 
 
 }());
-
