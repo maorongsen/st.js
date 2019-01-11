@@ -5,23 +5,55 @@
 		BASIC: 1,
 		LOOP: 2,
 		CONDITIONAL: 3, //
-		EXISTENTIAL:4, //存在判断
-		CONCAT:5,
-		MERGE:6, 
-		LOCAL:7 //局部变量 #lent
-	   };
-	   //语法分析节点
-	function ASNode(isStatic, directiveType, directive, renderFunc){
+		EXISTENTIAL: 4, //存在判断
+		CONCAT: 5,
+		MERGE: 6,
+		LOCAL: 7 //局部变量 #lent
+	};
+	//语法分析节点
+	function ASNode(isStatic, directiveType, directive, renderFuncStr) {
 		this.isStatic = isStatic; //静态内容，不包含{{}}
 		this.directiveType = directiveType; //指令类型
 		this.directive = directive; //指令#let
-		this.renderFunc = renderFunc; //渲染函数
+		if(renderFuncStr){
+			console.log(renderFuncStr);
+		}
+		this.renderFunc = Function(renderFuncStr); //渲染函数
+		this.render = function (data) {
+			return this.renderFunc.bind(data)();
+		}
+	}
+
+	function createRenderFuncStr(str) {
+		var re = /\{\{(.*?)\}\}/g;
+		var full_re = /^\{\{((?!\}\}).)*\}\}$/;
+		var variables = str.match(re);
+		if (full_re.test(str)) {
+			var slot = variables[0].replace(re, '$1');
+			var funcStr = 'with(this){ return (' + slot + ');}';
+			return funcStr;
+		}
+		var funcStr = 'with(this){ var t="' + str + '";';
+		for (var i = 0; i < variables.length; i++) {
+			var variable = variables[i];
+			var slot = variable.replace(re, '$1');
+			if (i === 0) {
+				funcStr += 'var v="' + variable + '";';
+				funcStr += 'var s=' + slot + ';';
+			} else {
+				funcStr += 'v="' + variable + '";';
+				funcStr += 's=' + slot + ';';
+			}
+			funcStr += 't = t.replace(v,s);'
+		}
+		funcStr += 'return t;}'
+		return funcStr;
 	}
 	var Helper = {
-		testCache:{},
+		testCache: {},
 		is_template: function (str) {
 			var ret = Helper.testCache[str];
-			if (ret != undefined){
+			if (ret != undefined) {
 				return ret;
 			}
 			var re = /\{\{(.+)\}\}/g;
@@ -56,16 +88,13 @@
 				var keys = Object.keys(item);
 				// assuming that there's only a single kv pair for each item
 				var key = keys[0];
-				var func = TRANSFORM.tokenize(key);
-				if (func.name === '#if' || func.name === '#elseif') {
-					var expression = func.expression;
-					Function()
-					var res = TRANSFORM.expEval(expression, data);
-					if (res ) {
-		
+				var keyNode = TRANSFORM.parse(key);
+				if (keyNode.directive === '#if' || keyNode.directive === '#elseif') {
+					var res = keyNode.render(data);
+					if (res) {
 						return TRANSFORM.run(item[key], data);
 					} else {
-						
+
 					}
 				} else {
 					// #else
@@ -122,69 +151,21 @@
 			// the first item should have #if as its key
 			// the first item should also contain an expression
 			var first = template[0];
-			var func;
-			for (var key in first) {
-				func = TRANSFORM.tokenize(key);
-				if (!func) {
-					return false;
-				}
-				if (!func.name) {
-					return false;
-				}
-				// '{{#if }}'
-				if (!func.expression || func.expression.length === 0) {
-					return false;
-				}
-				if (func.name.toLowerCase() !== '#if') {
-					return false;
-				}
-			}
-			if (template.length === 1) {
-				// If we got this far and the template has only one item, it means
-				// template had one item which was '#if' so it's valid
+			var firstKey = Object.keys(first)[0];
+			var keyNode = TRANSFORM.parse(firstKey);
+			if (keyNode.directive === '#if'){
 				return true;
 			}
-			// Condition 4.
-			// in case there's more than two items, everything between the first and the last item should be #elseif
-			var they_are_all_elseifs = true;
-			for (var template_index = 1; template_index < template.length - 1; template_index++) {
-				var template_item = template[template_index];
-				for (var template_key in template_item) {
-					func = TRANSFORM.tokenize(template_key);
-					if (func.name.toLowerCase() !== '#elseif') {
-						they_are_all_elseifs = false;
-						break;
-					}
-				}
-			}
-			if (!they_are_all_elseifs) {
-				// There was at least one item that wasn't an elseif
-				// therefore invalid
-				return false;
-			}
-			// If you've reached this point, it means we have multiple items and everything between the first and the last item
-			// are elseifs
-			// Now we need to check the validity of the last item
-			// Condition 5.
-			// in case there's more than one item, it should end with #else or #elseif
-			var last = template[template.length - 1];
-			for (var last_key in last) {
-				func = TRANSFORM.tokenize(last_key);
-				if (['#else', '#elseif'].indexOf(func.name.toLowerCase()) === -1) {
-					return false;
-				}
-			}
-			// Congrats, if you've reached this point, it's valid
-			return true;
+			return false;
 		},
 	};
 	var count = 0;
 	var TRANSFORM = {
 		memory: {},
-		
+
 		//编译模板
 
-		compileTemplate: function(obj){
+		compileTemplate: function (obj) {
 			var t = {};
 			t.dt = null;
 			t.d = null;
@@ -195,62 +176,62 @@
 		},
 		//分离动静模板
 		separate: function (template, forceKeep) {
-			if (Helper.is_array(template)){
+			if (Helper.is_array(template)) {
 				//数组
 				var d = [];
 				var k = Conditional.is(template); //是判断语句，那么就算value无内容也要保留空对象
 				for (var i = 0; i < template.length; i++) {
 					var ret = TRANSFORM.separate(template[i], k);
-					if (ret){
+					if (ret) {
 						d.push(ret);
 					}
 				}
-				if (d.length){
+				if (d.length) {
 					return d;
 				}
-			}else{ 
+			} else {
 				//对象
 				var d = {};
 				for (var key in template) {
 					//如果key是
 					var value = template[key];
-					if (Helper.is_template(key)){
+					if (Helper.is_template(key)) {
 						if (typeof value === 'string') {
 							d[key] = value;
-						}else{
+						} else {
 							var ret = TRANSFORM.separate(value);
-							if (ret){
+							if (ret) {
 								d[key] = ret;
-							}else if (forceKeep){
-								if (Helper.is_array(value)){
+							} else if (forceKeep) {
+								if (Helper.is_array(value)) {
 									d[key] = [];
-								}else{
+								} else {
 									d[key] = {};
 								}
 							}
 						}
-					}else{
+					} else {
 						if (typeof value === 'string') {
-							if (Helper.is_template(value)){
+							if (Helper.is_template(value)) {
 								d[key] = value;
 							}
-						}else{
+						} else {
 							var ret = TRANSFORM.separate(value);
-							if (ret){
+							if (ret) {
 								d[key] = ret;
 							}
 						}
 					}
 				}
-				if (Object.keys(d).length){
+				if (Object.keys(d).length) {
 					return d;
 				}
 			}
 			return null;
 		},
-		fastTransform:function(template, data){
-            var dt  = TRANSFORM.separate(template);
-            TRANSFORM.transform(dt, data);
+		fastTransform: function (template, data) {
+			var dt = TRANSFORM.separate(template);
+			TRANSFORM.transform(dt, data);
 		},
 		transform: function (template, data, injection, serialized) {
 			var data = data;
@@ -276,89 +257,50 @@
 			}
 		},
 		//缓存token信息
-		tokenizeCache:{},
+		tokenizeCache: {},
 		//区分指令和表达式，不然返回null，传进来只能是{{}}基本slot
-		astNodeCache:{},
-		tokenize: function (str) {
-			str = str.trim()
-			if (Helper.is_template(str)){
+		asNodeCache: {},
+		parse: function (str) {
+			var node = TRANSFORM.asNodeCache[str];
+			if (node) {
+				return node;
+			}
+			var originalStr = str;
+			str = str.trim();
+			if (Helper.is_template(str)) {
 				//判断是否指令
-				if (str.indexOf('{{#')){
+				if (str.indexOf('{{#') !== -1) {
 					var re = /\{\{(.+)\}\}/g;
 					str = str.replace(re, '$1');
 					var tokens = str.split(' ');
 					var directive = tokens.shift();
 					var expression = tokens.join(' ');
-					var func = Function('with(this){ return (' + expression + ');}');
-
+					var funcStr = 'with(this){ return (' + expression + ');}';
 					var directiveType;
-					if (directive === '#if' || directive === '#ifelse', directive === '#else'){
+					if (directive === '#if' || directive === '#ifelse', directive === '#else') {
 						directiveType = DirectiveType.CONDITIONAL;
-					}else if (directive === '#each'){
+					} else if (directive === '#each') {
 						directiveType = DirectiveType.LOOP;
-					}else if (directive === '#let'){
+					} else if (directive === '#let') {
 						directiveType = DirectiveType.LOCAL;
-					}else if (directive === '#concat'){
+					} else if (directive === '#concat') {
 						directiveType = DirectiveType.CONCAT;
-					}else if (directive === '#merge'){
+					} else if (directive === '#merge') {
 						directiveType = DirectiveType.MERGE;
-					}else if (directive === '#?'){
+					} else if (directive === '#?') {
 						directiveType = DirectiveType.EXISTENTIAL;
 					}
-					var node = new ASTNode(false, directiveType, directive, func);
-					return node;
-				}else{
-
+					node = new ASNode(false, directiveType, directive, funcStr);
+				} else {
+					//普通模板
+					var funcStr = createRenderFuncStr(str);
+					node = new ASNode(false, null, null, funcStr);
 				}
-				//去掉{{}}
-				str = str.replace(re, '$1');
-				// str : '#each $jason.items'
-				//去掉收尾空白符，按照空格分割字符
-			var tokens = str.trim().split(' ');
+			} else {
+				node = new ASNode(true);
 			}
-			var node = new ASTNode(true);
+			TRANSFORM.asNodeCache[originalStr] = node;
 			return node;
-
-
-
-			var cacheKey = str;
-			var cachedToken = TRANSFORM.tokenizeCache[cacheKey];
-			if (cachedToken != undefined){
-				return cachedToken;
-			}
-			// INPUT : string
-			// OUTPUT : {name: FUNCTION_NAME:STRING, args: ARGUMENT:ARRAY}
-			//匹配{{}}
-			var re = /\{\{(.+)\}\}/g;
-			//去掉{{}}
-			str = str.replace(re, '$1');
-			// str : '#each $jason.items'
-			//去掉收尾空白符，按照空格分割字符
-			var tokens = str.trim().split(' ');
-			// => tokens: ['#each', '$jason.items']
-
-			var func;
-			if (tokens.length > 0) {
-				//是否#开头的指令
-				if (tokens[0][0] === '#') {
-					//pop第一个字符串
-					func = tokens.shift();
-					// => func: '#each' or '#if'
-					// => tokens: ['$jason.items', '&&', '$jason.items.length', '>', '0']
-
-					//再链接回来变成表达式
-					var expression = tokens.join(' ');
-					// => expression: '$jason.items && $jason.items.length > 0'
-					var token = {
-						name: func,
-						expression: expression
-					};
-					TRANSFORM.tokenizeCache[cacheKey] = token;
-					return token;
-				}
-			}
-			TRANSFORM.tokenizeCache[cacheKey] = null;
-			return null;
 		},
 		run: function (template, data) {
 			var result;
@@ -366,10 +308,11 @@
 			//只是一个value节点
 			if (typeof template === 'string') {
 				// Leaf node, so call TRANSFORM.fillout()
-				if (Helper.is_template(template)) {
-					result = TRANSFORM.fillout(data, template);
-				} else {
+				var node = TRANSFORM.parse(template);
+				if (node.isStatic) {
 					result = template;
+				} else {
+					result = node.render(data);
 				}
 			} else if (Helper.is_array(template)) {
 				//如果是一个数组，那么要看看是否是一个条件表达式
@@ -394,16 +337,15 @@
 				for (var key in template) {
 					// Checking to see if the key contains template..
 					// Currently the only case for this are '#each' and '#include'
-					if (Helper.is_template(key)) {
-						fun = TRANSFORM.tokenize(key);
+					var keyNode = TRANSFORM.parse(key);
+					var val = template[key];
+					if (!keyNode.isStatic) {
 						//如果有指令
-						if (fun) {
-							if (fun.name === '#include') {
-								// this was handled above (before the for loop) so just ignore
-							} else if (fun.name === '#let') {
-								if (Helper.is_array(template[key]) && template[key].length == 2) {
-									var defs = template[key][0];
-									var real_template = template[key][1];
+						if (keyNode.directiveType) {
+							if (keyNode.directive === '#let') {
+								if (Helper.is_array(val) && val.length == 2) {
+									var defs = val[0];
+									var real_template = val[1];
 
 									// 1. Parse the first item to assign variables
 									var parsed_keys = TRANSFORM.run(defs, data);
@@ -417,10 +359,10 @@
 									// 2. Pass it into TRANSFORM.run
 									result = TRANSFORM.run(real_template, data);
 								}
-							} else if (fun.name === '#concat') {
-								if (Helper.is_array(template[key])) {
+							} else if (keyNode.directive === '#concat') {
+								if (Helper.is_array(val)) {
 									result = [];
-									template[key].forEach(function (concat_item) {
+									val.forEach(function (concat_item) {
 										var res = TRANSFORM.run(concat_item, data);
 										result = result.concat(res);
 									});
@@ -433,10 +375,10 @@
 										result = template;
 									}
 								}
-							} else if (fun.name === '#merge') {
-								if (Helper.is_array(template[key])) {
+							} else if (keyNode.directive === '#merge') {
+								if (Helper.is_array(val)) {
 									result = {};
-									template[key].forEach(function (merge_item) {
+									val.forEach(function (merge_item) {
 										var res = TRANSFORM.run(merge_item, data);
 										for (var key in res) {
 											result[key] = res[key];
@@ -470,9 +412,9 @@
 										}
 									}
 								}
-							} else if (fun.name === '#each') {
+							} else if (keyNode.directive === '#each') {
 								// newData will be filled with parsed results
-								var newData = TRANSFORM.expEval(fun.expression, data);
+								var newData = keyNode.render(data);
 
 								// Ideally newData should be an array since it was prefixed by #each
 								if (newData && Helper.is_array(newData)) {
@@ -502,7 +444,7 @@
 										}
 
 										// run
-										var loop_item = TRANSFORM.run(template[key], newData[index]);
+										var loop_item = TRANSFORM.run(val, newData[index]);
 
 										// clean up $index
 										if (typeof newData[index] === 'object') {
@@ -547,43 +489,40 @@
 							// If the key is a template expression but aren't either #include or #each,
 							// it needs to be parsed
 							//没有指令，直接填充模板
-							var k = TRANSFORM.fillout(data, key);
-							var v = TRANSFORM.fillout(data, template[key]);
-							if (k !== undefined && v !== undefined) {
-								result[k] = v;
+							var k = keyNode.render(data);
+							var valNode = TRANSFORM.parse(val);
+							if (k !== undefined) {
+								if (valNode.isStatic) {
+									result[k] = val;
+								} else {
+									var v = val.render(data);
+									if (v !== undefined) {
+										result[k] = v;
+									}
+								}
 							}
 						}
 					} else {
-						// Helper.is_template(key) was false, which means the key was not a template (hardcoded string)
-						//如果key不是模板，那么直接处理value
-						if (typeof template[key] === 'string') {
-							fun = TRANSFORM.tokenize(template[key]);
-							//value只关心存在判断
-							if (fun && fun.name === '#?') {
-								// If the key is a template expression but aren't either #include or #each,
-								// it needs to be parsed
-								var real_template = '{{' + fun.expression + '}}';
-								var filled = TRANSFORM.fillout(data, real_template);
-								if (filled === real_template || !filled) {
-									// case 1.
-									// not parsed, which means the evaluation failed.
-
-									// case 2.
-									// returns fasly value
-
-									// both cases mean this key should be excluded
-								} else {
-									// only include if the evaluation is truthy
-									result[key] = filled;
-								}
+						var val = template[key];
+						if (typeof val === 'string') {
+							var valNode = TRANSFORM.parse(val);
+							if (valNode.isStatic) {
+								result[key] = val;
 							} else {
-								var item = TRANSFORM.run(template[key], data);
-								if (item !== undefined) {
-									result[key] = item;
+								if (valNode.directiveType === DirectiveType.EXISTENTIAL) {
+									var filled = valNode.render(data);
+									if (filled) {
+										result[key] = filled;
+									}
+								} else {
+									var item = valNode.render(data);
+									if (item !== undefined) {
+										result[key] = item;
+									}
 								}
 							}
 						} else {
-							var item = TRANSFORM.run(template[key], data);
+							var item = TRANSFORM.run(val, data);
 							if (item !== undefined) {
 								result[key] = item;
 							}
@@ -595,30 +534,29 @@
 			}
 			return result;
 		},
-		renderFuncsCache:{},
-		createRenderFunc:function(template){
+		createRenderFunc: function (template) {
 			if (Helper.is_template(template)) {
 				var re = /\{\{(.*?)\}\}/g;
 				var full_re = /^\{\{((?!\}\}).)*\}\}$/;
 				// slots are all instances of {{ }} in the current expression
 				// for example '{{this.item}} is {{this.user}}'s' has two slots: ['this.item', 'this.user']
-				var	variables = template.match(re);
+				var variables = template.match(re);
 				if (variables) {
-					if (full_re.test(template)) { 
+					if (full_re.test(template)) {
 						var slot = variables[0].replace(re, '$1');
 						var funcStr = 'with(this){ return (' + slot + ');}';
-						return Function(funcStr); 
+						return Function(funcStr);
 					}
 					var funcStr = 'with(this){ var t="' + template + '";';
 					for (var i = 0; i < variables.length; i++) {
 						var variable = variables[i];
 						var slot = variable.replace(re, '$1');
-						if(i === 0){
-							funcStr += 'var v="' + variable +'";';
-							funcStr += 'var s=' + slot +';';
-						}else{
-							funcStr += 'v="' + variable +'";';
-							funcStr += 's=' + slot +';';
+						if (i === 0) {
+							funcStr += 'var v="' + variable + '";';
+							funcStr += 'var s=' + slot + ';';
+						} else {
+							funcStr += 'v="' + variable + '";';
+							funcStr += 's=' + slot + ';';
 						}
 						funcStr += 't = t.replace(v,s);'
 					}
@@ -630,26 +568,6 @@
 				}
 			}
 			return null;
-		},
-		fillout: function (data, template, raw) {
-			// 1. fill out if possible
-			// 2. otherwise return the original
-			var renderFunc = TRANSFORM.renderFuncsCache[template];
-			if (renderFunc === undefined){
-				renderFunc = TRANSFORM.createRenderFunc(template);
-				TRANSFORM.renderFuncsCache[template] = renderFunc;
-			}
-			if (renderFunc){
-				var result = renderFunc.bind(data)();
-				console.log(result);
-				return result;
-			}
-			return template;
-		},
-		//表达式求值
-		expEval:function(expression, data){
-			var funcStr = 'with(this){ return (' + expression + ');}';
-			return Function(funcStr).bind(data)();
 		}
 	};
 
@@ -700,7 +618,7 @@
 		};
 	}
 
-	/*
+	
 	//测试basice
 	console.log("测试Basic")
 	var template = {
@@ -802,7 +720,7 @@
 	}
 	result = TRANSFORM.transform(template, data)
 	console.log(result)
-	*/
-     
+	
+
 
 }());
