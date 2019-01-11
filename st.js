@@ -26,7 +26,7 @@
 		},
 	};
 	var Conditional = {
-		//执行判断逻辑
+		//执行判断逻辑，模板必须是数组。
 		run: function (template, data) {
 			// expecting template as an array of objects,
 			// each of which contains '#if', '#elseif', 'else' as key
@@ -45,18 +45,13 @@
 				var func = TRANSFORM.tokenize(key);
 				if (func.name === '#if' || func.name === '#elseif') {
 					var expression = func.expression;
-					var res = TRANSFORM.fillout(data, '{{' + expression + '}}');
-					if (res === ('{{' + expression + '}}')) {
-						// if there was at least one item that was not evaluatable,
-						// we halt parsing and return the template;
-						return template;
+					Function()
+					var res = TRANSFORM.expEval(expression, data);
+					if (res ) {
+		
+						return TRANSFORM.run(item[key], data);
 					} else {
-						if (res) {
-							// run the current one and return
-							return TRANSFORM.run(item[key], data);
-						} else {
-							// res was falsy. Ignore this branch and go on to the next item
-						}
+						
 					}
 				} else {
 					// #else
@@ -256,7 +251,7 @@
 		},
 		//缓存token信息
 		tokenizeCache:{},
-		//区分指令和表达式，不然返回null
+		//区分指令和表达式，不然返回null，传进来只能是{{}}基本slot
 		tokenize: function (str) {
 			var cacheKey = str;
 			var cachedToken = TRANSFORM.tokenizeCache[cacheKey];
@@ -409,7 +404,7 @@
 								}
 							} else if (fun.name === '#each') {
 								// newData will be filled with parsed results
-								var newData = TRANSFORM.fillout(data, '{{' + fun.expression + '}}', true);
+								var newData = TRANSFORM.expEval(fun.expression, data);
 
 								// Ideally newData should be an array since it was prefixed by #each
 								if (newData && Helper.is_array(newData)) {
@@ -499,8 +494,9 @@
 							if (fun && fun.name === '#?') {
 								// If the key is a template expression but aren't either #include or #each,
 								// it needs to be parsed
-								var filled = TRANSFORM.fillout(data, '{{' + fun.expression + '}}');
-								if (filled === '{{' + fun.expression + '}}' || !filled) {
+								var real_template = '{{' + fun.expression + '}}';
+								var filled = TRANSFORM.fillout(data, real_template);
+								if (filled === real_template || !filled) {
 									// case 1.
 									// not parsed, which means the evaluation failed.
 
@@ -531,161 +527,62 @@
 			}
 			return result;
 		},
-		variablesCache:{},
+		renderFuncsCache:{},
+		createRenderFunc:function(template){
+			if (Helper.is_template(template)) {
+				var re = /\{\{(.*?)\}\}/g;
+				var full_re = /^\{\{((?!\}\}).)*\}\}$/;
+				// slots are all instances of {{ }} in the current expression
+				// for example '{{this.item}} is {{this.user}}'s' has two slots: ['this.item', 'this.user']
+				var	variables = template.match(re);
+				if (variables) {
+					if (full_re.test(template)) { 
+						var slot = variables[0].replace(re, '$1');
+						var funcStr = 'with(this){ return (' + slot + ');}';
+						return Function(funcStr); 
+					}
+					var funcStr = 'with(this){ var t="' + template + '";';
+					for (var i = 0; i < variables.length; i++) {
+						var variable = variables[i];
+						var slot = variable.replace(re, '$1');
+						if(i === 0){
+							funcStr += 'var v="' + variable +'";';
+							funcStr += 'var s=' + slot +';';
+						}else{
+							funcStr += 'v="' + variable +'";';
+							funcStr += 's=' + slot +';';
+						}
+						funcStr += 't = t.replace(v,s);'
+					}
+					funcStr += 'return t;}'
+					console.log(funcStr);
+					return Function(funcStr);
+				} else {
+					return null;
+				}
+			}
+			return null;
+		},
 		fillout: function (data, template, raw) {
 			// 1. fill out if possible
 			// 2. otherwise return the original
-			var replaced = template;
-			// Run fillout() only if it's a template. Otherwise just return the original string
-			if (Helper.is_template(template)) {
-				//非贪婪匹配
-				var variables = TRANSFORM.variablesCache[template];
-				if (variable === undefined){
-					var re = /\{\{(.*?)\}\}/g;
-
-				// variables are all instances of {{ }} in the current expression
-				// for example '{{this.item}} is {{this.user}}'s' has two variables: ['this.item', 'this.user']
-					variables = template.match(re);
-					TRANSFORM.variablesCache[template] = variables;
-				}
-				
-
-				if (variables) {
-					if (raw) {
-						// 'raw' is true only for when this is called from #each
-						// Because #each is expecting an array, it shouldn't be stringified.
-						// Therefore we pass template:null,
-						// which will result in returning the original result instead of trying to
-						// replace it into the template with a stringified version
-						replaced = TRANSFORM._fillout({
-							variable: variables[0],
-							data: data,
-							template: null,
-						});
-					} else {
-						// Fill out the template for each variable
-						for (var i = 0; i < variables.length; i++) {
-							var variable = variables[i];
-							replaced = TRANSFORM._fillout({
-								variable: variable,
-								data: data,
-								template: replaced,
-							});
-						}
-					}
-				} else {
-					return replaced;
-				}
+			var renderFunc = TRANSFORM.renderFuncsCache[template];
+			if (renderFunc === undefined){
+				renderFunc = TRANSFORM.createRenderFunc(template);
+				TRANSFORM.renderFuncsCache[template] = renderFunc;
 			}
-			return replaced;
-		},
-		funcCache:{},
-		_fillout: function (options) {
-			// Given a template and fill it out with passed slot and its corresponding data
-			var re = /\{\{(.*?)\}\}/g;
-			//正向否定预查，只包含{{xxx}}的纯模板
-			var full_re = /^\{\{((?!\}\}).)*\}\}$/;
-			var variable = options.variable;
-			var data = options.data;
-			var template = options.template;
-			try {
-				// 1. Evaluate the variable
-				// 去掉{{}}
-				
-
-				// data must exist. Otherwise replace with blank
-				if (data) {
-					var data_type = typeof data;
-					if (['number', 'string', 'array', 'boolean', 'function'].indexOf(data_type === -1)) {
-						data.$root = root;
-					}
-					
-					var func = TRANSFORM.funcCache[variable];
-					if (func === undefined){
-						var slot = variable.replace(re, '$1');
-						var match = /function\([ ]*\)[ ]*\{(.*)\}[ ]*$/g.exec(slot);
-						if (match) {
-							func = Function('with(this) {' + match[1] + '}');
-						} else if (/\breturn [^;]+;?[ ]*$/.test(slot) && /return[^}]*$/.test(slot)) {
-							// Function expression with explicit 'return' expression
-							func = Function('with(this) {' + slot + '}');
-						} else {
-							// Function expression with explicit 'return' expression
-							// Ordinary simple expression that
-							func = Function('with(this) {return (' + slot + ')}');
-						}
-						TRANSFORM.funcCache[variable] = func;
-					}
-					
-					// Attach $root to each node so that we can reference it from anywhere
-					
-					
-					// If the pattern ends with a return statement, but is NOT wrapped inside another function ([^}]*$), it's a function expression
-					//匹配是否函数表达式
-
-					var evaluated = func.bind(data)();
-					// var evaluated = "xxx";
-					
-					delete data.$root; // remove $root now that the parsing is over
-					if (evaluated) {
-						// In case of primitive types such as String, need to call valueOf() to get the actual value instead of the promoted object
-						evaluated = evaluated.valueOf();
-					}
-					if (typeof evaluated === 'undefined') {
-						// it tried to evaluate since the variable existed, but ended up evaluating to undefined
-						// (example: var a = [1,2,3,4]; var b = a[5];)
-						return template;
-					} else {
-						// 2. Fill out the template with the evaluated value
-						// Be forgiving and print any type, even functions, so it's easier to debug
-						if (evaluated) {
-							// IDEAL CASE : Return the replaced template
-							if (template) {
-								//如果是只包含{{xxx}}的纯模板，且求值是一个对象或者一个数组，会直接返回对象，不会作为字符串替换模板内容
-								// if the template is a pure template with no additional static text,
-								// And if the evaluated value is an object or an array, we return the object itself instead of
-								// replacing it into template via string replace, since that will turn it into a string.
-								if (full_re.test(template)) {
-									return evaluated;
-								} else {
-									return template.replace(variable, evaluated);
-								}
-							} else {
-								return evaluated;
-							}
-						} else {
-							// Treat false or null as blanks (so that #if can handle it)
-							if (template) {
-								// if the template is a pure template with no additional static text,
-								// And if the evaluated value is an object or an array, we return the object itself instead of
-								// replacing it into template via string replace, since that will turn it into a string.
-								if (full_re.test(template)) {
-									return evaluated;
-								} else {
-									//false和null会被处理成空字符串
-									return template.replace(variable, '');
-								}
-							} else {
-								return '';
-							}
-						}
-					}
-				}
-				// REST OF THE CASES
-				// if evaluated is null or undefined,
-				// it probably means one of the following:
-				//  1. The current data being parsed is not for the current template
-				//  2. It's an error
-				//
-				//  In either case we need to return the original template unparsed.
-				//    1. for case1, we need to leave the template alone so that the template can be parsed
-				//      by another data set
-				//    2. for case2, it's better to just return the template so it's easier to debug
-				return template;
-			} catch (err) {
-				return template;
+			if (renderFunc){
+				var result = renderFunc.bind(data)();
+				console.log(result);
+				return result;
 			}
+			return template;
 		},
+		//表达式求值
+		expEval:function(expression, data){
+			var funcStr = 'with(this){ return (' + expression + ');}';
+			return Function(funcStr).bind(data)();
+		}
 	};
 
 	// Native JSON object override
@@ -829,15 +726,15 @@
 			badge: "{{#? notifications.home}}"
 		}, {
 			text: "message",
-			badge: "{{#? notification.message}}"
+			badge: "{{#? notifications.message}}"
 		}, {
 			text: "invite",
-			badge: "{{#? notification.invite}}"
+			badge: "{{#? notifications.invite}}"
 		}]
 	}
 	result = TRANSFORM.transform(template, data)
 	console.log(result)
-	
-     */
+	*/
+     
 
 }());
