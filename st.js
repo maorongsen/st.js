@@ -1,8 +1,22 @@
 (function () {
 	var $context = this;
-	var root; // root context
-	var sTemplate; //静态模板
-	var dTemplate; //动态模板
+	//指令类型
+	var DirectiveType = {
+		BASIC: 1,
+		LOOP: 2,
+		CONDITIONAL: 3, //
+		EXISTENTIAL:4, //存在判断
+		CONCAT:5,
+		MERGE:6, 
+		LOCAL:7 //局部变量 #lent
+	   };
+	   //语法分析节点
+	function ASNode(isStatic, directiveType, directive, renderFunc){
+		this.isStatic = isStatic; //静态内容，不包含{{}}
+		this.directiveType = directiveType; //指令类型
+		this.directive = directive; //指令#let
+		this.renderFunc = renderFunc; //渲染函数
+	}
 	var Helper = {
 		testCache:{},
 		is_template: function (str) {
@@ -167,6 +181,18 @@
 	var count = 0;
 	var TRANSFORM = {
 		memory: {},
+		
+		//编译模板
+
+		compileTemplate: function(obj){
+			var t = {};
+			t.dt = null;
+			t.d = null;
+			t.renderFunc = null;
+			t.isTemplate = false;
+
+			return t;
+		},
 		//分离动静模板
 		separate: function (template, forceKeep) {
 			if (Helper.is_array(template)){
@@ -252,7 +278,49 @@
 		//缓存token信息
 		tokenizeCache:{},
 		//区分指令和表达式，不然返回null，传进来只能是{{}}基本slot
+		astNodeCache:{},
 		tokenize: function (str) {
+			str = str.trim()
+			if (Helper.is_template(str)){
+				//判断是否指令
+				if (str.indexOf('{{#')){
+					var re = /\{\{(.+)\}\}/g;
+					str = str.replace(re, '$1');
+					var tokens = str.split(' ');
+					var directive = tokens.shift();
+					var expression = tokens.join(' ');
+					var func = Function('with(this){ return (' + expression + ');}');
+
+					var directiveType;
+					if (directive === '#if' || directive === '#ifelse', directive === '#else'){
+						directiveType = DirectiveType.CONDITIONAL;
+					}else if (directive === '#each'){
+						directiveType = DirectiveType.LOOP;
+					}else if (directive === '#let'){
+						directiveType = DirectiveType.LOCAL;
+					}else if (directive === '#concat'){
+						directiveType = DirectiveType.CONCAT;
+					}else if (directive === '#merge'){
+						directiveType = DirectiveType.MERGE;
+					}else if (directive === '#?'){
+						directiveType = DirectiveType.EXISTENTIAL;
+					}
+					var node = new ASTNode(false, directiveType, directive, func);
+					return node;
+				}else{
+
+				}
+				//去掉{{}}
+				str = str.replace(re, '$1');
+				// str : '#each $jason.items'
+				//去掉收尾空白符，按照空格分割字符
+			var tokens = str.trim().split(' ');
+			}
+			var node = new ASTNode(true);
+			return node;
+
+
+
 			var cacheKey = str;
 			var cachedToken = TRANSFORM.tokenizeCache[cacheKey];
 			if (cachedToken != undefined){
